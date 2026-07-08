@@ -1,6 +1,5 @@
 from enum import IntEnum, auto
 
-
 class Card(IntEnum):
     """ Defines the set of all possible card colors """
     RED = auto()
