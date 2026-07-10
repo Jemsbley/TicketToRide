@@ -1,5 +1,7 @@
 import constants as c
 import enums as e
+import american_board as a
+import controller
 import random
 
 
@@ -18,24 +20,43 @@ class Game:
 
     def __init__(self):
         """ Sets up the fields of the game"""
-        self.players: list = [] # replace with controllers
+        self.players: list[controller.Controller] = []
         self.hands: list[list[e.Card]] = []
+        self.trains_remaining: list[int] = []
         self.deck: list[e.Card] = []
         self.revealed_cards: list[e.Card] = []
         self.withdraw_pile: list[e.Card] = []
+        self.tickets: list[a.Ticket] = []
+        self.double_paths: bool = False
+        self.player_turn: int = 0
 
 
-    def initialize(self, players: int):
+    def initialize(self, players: list[controller.Controller]):
         """ Initializes the game """
-        if players < 2 or players > 5:
+        if len(players) < 2 or len(players) > 5:
             raise ValueError("Invalid number of players. Must be between 2 and 5 (inclusive)")
+        if len(players) > 3:
+            self.double_paths = True
         self.players = players
         self.hands = [[] for _ in range(len(self.players))]
+        self.trains_remaining = [c.START_OF_GAME_PLAYER_TRAIN_COUNT for _ in range(len(self.players))]
         self.deck = _create_deck()
         for hand in self.hands:
             for i in range(c.START_OF_GAME_TRAIN_DRAW): hand.append(self._draw_from_deck())
         self._refill_reveal()
+        self.tickets = a.TICKETS
+        random.shuffle(self.tickets)
         # give players tickets then ask for them to decide which to keep, then start the game
+        for player in self.players:
+            drawn = [self.tickets.pop(0) for _ in range(c.START_OF_GAME_TICKET_DRAW)]
+            put_to_bottom = player.draw_tickets(drawn, c.START_OF_GAME_TICKET_REQUIRED_KEEP) # TODO change this to also provide them the entire game state which they are allowed to see
+            self.tickets.extend(put_to_bottom)
+        # TODO ask player 0 to begin their turn and actually start the game
+
+
+    def _next_turn(self):
+        """ Cycles the index logically associated with the player who will make their move next """
+        self.player_turn = (self.player_turn + 1) % len(self.players)
 
 
     def _refill_reveal(self):
