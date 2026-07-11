@@ -1,8 +1,39 @@
-import constants as c
-import enums as e
-import american_board as a
-import controller
 import random
+from dataclasses import dataclass
+
+import american_board as a
+import constants as c
+import controller
+import enums as e
+
+
+@dataclass
+class Claim:
+    """ Defines the information in a claim attempt taken by a player """
+    start: a.City
+    end: a.City
+    path_color: e.Card
+    cards: list[e.Card]
+
+
+# An action is either drawing in some aspect or attempting to claim a route
+Action = e.DrawType | Claim
+
+
+@dataclass
+class PlayerPerspectiveGameState:
+    """ Defines the state of a game from a scoped individual player perspective """
+    players: list[e.PlayerColor]
+    scores: dict[e.PlayerColor, int]
+    longest_road_owner: e.PlayerColor
+    longest_road_length: int
+    my_hand: list[e.Card]
+    trains_remaining: dict[e.PlayerColor, int]
+    my_tickets: list[a.Ticket]
+    revealed_cards: list[e.Card]
+    tickets_left: int
+    deck_left: int
+    player_turn: e.PlayerColor
 
 
 def _create_deck() -> list[e.Card]:
@@ -20,38 +51,85 @@ class Game:
 
     def __init__(self):
         """ Sets up the fields of the game"""
-        self.players: list[controller.Controller] = []
-        self.hands: list[list[e.Card]] = []
-        self.trains_remaining: list[int] = []
+        self.players: dict[e.PlayerColor, controller.Controller] = dict()
+        self.scores: dict[e.PlayerColor, int] = dict()
+        self.longest_road_owner: e.PlayerColor = [col for col in e.PlayerColor][0]
+        self.longest_road_length: int = 0
+        self.hands: dict[e.PlayerColor, list[e.Card]] = dict()
+        self.trains_remaining: dict[e.PlayerColor, int] = dict()
+        self.player_tickets: dict[e.PlayerColor, list[a.Ticket]] = dict()
         self.deck: list[e.Card] = []
         self.revealed_cards: list[e.Card] = []
         self.withdraw_pile: list[e.Card] = []
         self.tickets: list[a.Ticket] = []
-        self.double_paths: bool = False
-        self.player_turn: int = 0
+        self.player_turn: e.PlayerColor = [col for col in e.PlayerColor][0]
+        self.turn_cycle: dict[e.PlayerColor, e.PlayerColor] = dict()
+        self.is_ending: bool = False
 
 
-    def initialize(self, players: list[controller.Controller]):
-        """ Initializes the game """
+    def start(self, players: list[controller.Controller]):
+        """ Starts and plays out the game """
         if len(players) < 2 or len(players) > 5:
             raise ValueError("Invalid number of players. Must be between 2 and 5 (inclusive)")
-        if len(players) > 3:
-            self.double_paths = True
-        self.players = players
-        self.hands = [[] for _ in range(len(self.players))]
-        self.trains_remaining = [c.START_OF_GAME_PLAYER_TRAIN_COUNT for _ in range(len(self.players))]
+        colors = [col for col in e.PlayerColor]
+        color_prev = colors[0]
+        for i in range(len(players)):
+            self.players[colors[i]] = players[i]
+            self.hands[colors[i]] = []
+            self.scores[colors[i]] = 0
+            self.trains_remaining[colors[i]] = c.START_OF_GAME_PLAYER_TRAIN_COUNT
+            if i > 0:
+                self.turn_cycle[color_prev] = colors[i]
+                color_prev = colors[i]
+        self.turn_cycle[color_prev] = colors[0]
+
         self.deck = _create_deck()
-        for hand in self.hands:
+        for hand in self.hands.values():
             for i in range(c.START_OF_GAME_TRAIN_DRAW): hand.append(self._draw_from_deck())
         self._refill_reveal()
         self.tickets = a.TICKETS
         random.shuffle(self.tickets)
-        # give players tickets then ask for them to decide which to keep, then start the game
-        for player in self.players:
+        for player in self.players.values():
             drawn = [self.tickets.pop(0) for _ in range(c.START_OF_GAME_TICKET_DRAW)]
-            put_to_bottom = player.draw_tickets(drawn, c.START_OF_GAME_TICKET_REQUIRED_KEEP) # TODO change this to also provide them the entire game state which they are allowed to see
+            put_to_bottom = player.draw_tickets(drawn.copy(), c.START_OF_GAME_TICKET_REQUIRED_KEEP, self._get_game_state(self.player_turn))
+            # TODO change put_to_bottom to make sure that the ones that they try to put to bottom are actually from the original list and put the drawn ones in their tickets hand
             self.tickets.extend(put_to_bottom)
-        # TODO ask player 0 to begin their turn and actually start the game
+        while not self.is_ending:
+            self.player_turn = self.turn_cycle[self.player_turn]
+            action = self.players.get(self.player_turn).make_turn(self._get_game_state(self.player_turn))
+            self._complete_action(self.player_turn, action)
+            if self.trains_remaining[self.player_turn] <= 2:
+                self.is_ending = True
+        final_turn = self.player_turn
+        self.player_turn = self.turn_cycle[self.player_turn]
+        while not self.player_turn == final_turn:
+            self.player_turn = self.turn_cycle[self.player_turn]
+            action = self.players.get(self.player_turn).make_turn(self._get_game_state(self.player_turn))
+            self._complete_action(self.player_turn, action)
+        # TODO declare winner
+
+
+    def _complete_action(self, color: e.PlayerColor, action: Action):
+        # TODO actually complete the player's action
+        return
+
+
+
+    def _get_game_state(self, color: e.PlayerColor) -> PlayerPerspectiveGameState:
+        """ Generates the readable gamestate from a specific player perspective """
+        return PlayerPerspectiveGameState(
+            [col for col in self.players.keys()],
+            self.scores.copy(),
+            self.longest_road_owner,
+            self.longest_road_length,
+            self.hands.get(color).copy(),
+            self.trains_remaining.copy(),
+            self.tickets.get(color).copy(),
+            self.revealed_cards.copy(),
+            len(self.tickets),
+            len(self.deck),
+            self.player_turn
+        )
 
 
     def _next_turn(self):
