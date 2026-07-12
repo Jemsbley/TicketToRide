@@ -8,8 +8,15 @@ import enums as e
 
 
 @dataclass
+class RouteState:
+    """ Defines the state of a route """
+    route: a.Route
+    claims: dict[e.Card, e.PlayerColor | None]
+
+
+@dataclass
 class Claim:
-    """ Defines the information in a claim attempt taken by a player """
+    """ Defines the information in a claim attempted by a player """
     start: a.City
     end: a.City
     path_color: e.Card
@@ -18,6 +25,7 @@ class Claim:
 
 # An action is either drawing in some aspect or attempting to claim a route
 Action = e.DrawType | Claim
+# TODO change this so a draw train allows the user to indicate how they wish to draw. they can either take from pile (provide an index) or provide no index and draw one from the top
 
 
 @dataclass
@@ -46,6 +54,12 @@ def _create_deck() -> list[e.Card]:
     return new_deck
 
 
+def _initialize_routes() -> list[RouteState]:
+    """ Initializes the routes of the game """
+    all_routes = [RouteState(item, {item.color: None for _ in range(len(item.color))}) for item in a.ROUTES]
+    return all_routes
+
+
 class Game:
     """ Defines the behaviors of the game """
 
@@ -64,13 +78,18 @@ class Game:
         self.tickets: list[a.Ticket] = []
         self.player_turn: e.PlayerColor = [col for col in e.PlayerColor][0]
         self.turn_cycle: dict[e.PlayerColor, e.PlayerColor] = dict()
+        self.routes: list[RouteState] = []
         self.is_ending: bool = False
+        self.in_progress: bool = False
 
 
     def start(self, players: list[controller.Controller]):
         """ Starts and plays out the game """
+        if self.in_progress:
+            raise ValueError("Game already started")
         if len(players) < 2 or len(players) > 5:
             raise ValueError("Invalid number of players. Must be between 2 and 5 (inclusive)")
+        self.in_progress = True
         colors = [col for col in e.PlayerColor]
         color_prev = colors[0]
         for i in range(len(players)):
@@ -84,15 +103,20 @@ class Game:
         self.turn_cycle[color_prev] = colors[0]
 
         self.deck = _create_deck()
+        self.routes = _initialize_routes()
         for hand in self.hands.values():
             for i in range(c.START_OF_GAME_TRAIN_DRAW): hand.append(self._draw_from_deck())
         self._refill_reveal()
         self.tickets = a.TICKETS
         random.shuffle(self.tickets)
-        for player in self.players.values():
+        for player in self.players.keys():
             drawn = [self.tickets.pop(0) for _ in range(c.START_OF_GAME_TICKET_DRAW)]
-            put_to_bottom = player.draw_tickets(drawn.copy(), c.START_OF_GAME_TICKET_REQUIRED_KEEP, self._get_game_state(self.player_turn))
-            # TODO change put_to_bottom to make sure that the ones that they try to put to bottom are actually from the original list and put the drawn ones in their tickets hand
+            put_to_bottom = (self.players.get(player).draw_tickets(drawn.copy(), c.START_OF_GAME_TICKET_REQUIRED_KEEP,
+                                                                   self._get_game_state(self.player_turn)))
+            for item in put_to_bottom:
+                if item not in drawn: raise ValueError("Discarded ticket not from drawn set")
+            kept = [item for item in drawn if item not in put_to_bottom]
+            self.player_tickets.get(player).extend(kept)
             self.tickets.extend(put_to_bottom)
         while not self.is_ending:
             self.player_turn = self.turn_cycle[self.player_turn]
@@ -110,9 +134,22 @@ class Game:
 
 
     def _complete_action(self, color: e.PlayerColor, action: Action):
-        # TODO actually complete the player's action
-        return
-
+        """ Attempts to complete a turn action provided by a player """
+        if isinstance(action, e.DrawType):
+            if action == e.DrawType.DRAW_TICKET:
+                # TODO use same code from before to hand the player tickets and force them to keep 1 (use constant from c)
+                return
+            else:
+                # TODO logic for requesting another action from the same player should they not draw a wild from the pool
+                # TODO remember to prevent players from drawing a wild on the second attempt
+                # TODO remember to redraw revealed if necessary here
+                return
+        elif isinstance(action, Claim):
+            # TODO validate if this claim is open, the player has provided sufficient resources, the player owns these resources
+            # TODO update score if necessary
+            return
+        else:
+            raise ValueError("Invalid action")
 
 
     def _get_game_state(self, color: e.PlayerColor) -> PlayerPerspectiveGameState:
