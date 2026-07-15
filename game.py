@@ -23,9 +23,10 @@ class Claim:
     cards: list[e.Card]
 
 
+DrawTrain = int | e.DrawType.DECK
+
 # An action is either drawing in some aspect or attempting to claim a route
-Action = e.DrawType | Claim
-# TODO change this so a draw train allows the user to indicate how they wish to draw. they can either take from pile (provide an index) or provide no index and draw one from the top
+Action = e.DRAW_TICKETS | Claim | DrawTrain
 
 
 @dataclass
@@ -42,14 +43,16 @@ class PlayerPerspectiveGameState:
     tickets_left: int
     deck_left: int
     player_turn: e.PlayerColor
+    turn_number: int
+    routes: list[RouteState]
 
 
 def _create_deck() -> list[e.Card]:
     """ Creates the deck of cards """
     new_deck: list[e.Card] = []
     for card in e.Card:
-        new_deck.extend([card for i in range(c.NUM_STANDARD_COLOR_CARDS)])
-    new_deck.extend([e.Card.WILD for i in range(c.NUM_ADDITIONAL_WILD_CARDS)])
+        new_deck.extend([card for _ in range(c.NUM_STANDARD_COLOR_CARDS)])
+    new_deck.extend([e.Card.WILD for _ in range(c.NUM_ADDITIONAL_WILD_CARDS)])
     random.shuffle(new_deck)
     return new_deck
 
@@ -80,6 +83,7 @@ class Game:
         self.turn_cycle: dict[e.PlayerColor, e.PlayerColor] = dict()
         self.routes: list[RouteState] = []
         self.is_ending: bool = False
+        self.turn_number: int = 0
         self.in_progress: bool = False
 
 
@@ -110,22 +114,18 @@ class Game:
         self.tickets = a.TICKETS
         random.shuffle(self.tickets)
         for player in self.players.keys():
-            drawn = [self.tickets.pop(0) for _ in range(c.START_OF_GAME_TICKET_DRAW)]
-            put_to_bottom = (self.players.get(player).draw_tickets(drawn.copy(), c.START_OF_GAME_TICKET_REQUIRED_KEEP,
-                                                                   self._get_game_state(self.player_turn)))
-            for item in put_to_bottom:
-                if item not in drawn: raise ValueError("Discarded ticket not from drawn set")
-            kept = [item for item in drawn if item not in put_to_bottom]
-            self.player_tickets.get(player).extend(kept)
-            self.tickets.extend(put_to_bottom)
+            self._draw_tickets(player, c.START_OF_GAME_TICKET_DRAW, c.START_OF_GAME_TICKET_REQUIRED_KEEP)
         while not self.is_ending:
             self.player_turn = self.turn_cycle[self.player_turn]
+            if self.player_turn == colors[0]:
+                self.turn_number += 1
             action = self.players.get(self.player_turn).make_turn(self._get_game_state(self.player_turn))
             self._complete_action(self.player_turn, action)
             if self.trains_remaining[self.player_turn] <= 2:
                 self.is_ending = True
         final_turn = self.player_turn
         self.player_turn = self.turn_cycle[self.player_turn]
+        self.turn_number += 1
         while not self.player_turn == final_turn:
             self.player_turn = self.turn_cycle[self.player_turn]
             action = self.players.get(self.player_turn).make_turn(self._get_game_state(self.player_turn))
@@ -133,17 +133,25 @@ class Game:
         # TODO declare winner
 
 
-    def _complete_action(self, color: e.PlayerColor, action: Action):
+    def _complete_action(self, color: e.PlayerColor, action: Action, can_draw_wild: bool = True):
         """ Attempts to complete a turn action provided by a player """
-        if isinstance(action, e.DrawType):
-            if action == e.DrawType.DRAW_TICKET:
-                # TODO use same code from before to hand the player tickets and force them to keep 1 (use constant from c)
+        if isinstance(action, DrawTrain):
+            if isinstance(action, int):
+                card = self.revealed_cards.pop(action)
+                self.hands[color].append(card)
+                if card != e.Card.WILD:
+                    self._complete_action(color, self.players.get(color).draw_trains(self._get_game_state(color)), False)
+                    return
+                elif not can_draw_wild:
+                    raise ValueError("Cannot draw wild card right now")
                 return
             else:
-                # TODO logic for requesting another action from the same player should they not draw a wild from the pool
-                # TODO remember to prevent players from drawing a wild on the second attempt
-                # TODO remember to redraw revealed if necessary here
+                self.hands[color].append(self._draw_from_deck())
+                self._complete_action(color, self.players.get(color).draw_trains(self._get_game_state(color)))
                 return
+        elif action == e.DRAW_TICKETS:
+            self._draw_tickets(color, c.TICKETS_DRAWN_DURING_TURN, c.TICKETS_REQUIRED_KEEP_DURING_TURN)
+            return
         elif isinstance(action, Claim):
             # TODO validate if this claim is open, the player has provided sufficient resources, the player owns these resources
             # TODO update score if necessary
@@ -152,8 +160,20 @@ class Game:
             raise ValueError("Invalid action")
 
 
+    def _draw_tickets(self, player: e.PlayerColor, num_to_draw: int, num_to_keep: int):
+        drawn = [self.tickets.pop(0) for _ in range(min(num_to_draw, len(self.tickets)))]
+        put_to_bottom = (self.players.get(player).draw_tickets(drawn.copy(), num_to_keep,
+                                                               self._get_game_state(self.player_turn)))
+        for item in put_to_bottom:
+            if item not in drawn: raise ValueError("Discarded ticket not from drawn set")
+        kept = [item for item in drawn if item not in put_to_bottom]
+        self.player_tickets.get(player).extend(kept)
+        self.tickets.extend(put_to_bottom)
+
+
+
     def _get_game_state(self, color: e.PlayerColor) -> PlayerPerspectiveGameState:
-        """ Generates the readable gamestate from a specific player perspective """
+        """ Generates the readable game state from a specific player perspective """
         return PlayerPerspectiveGameState(
             [col for col in self.players.keys()],
             self.scores.copy(),
@@ -161,17 +181,14 @@ class Game:
             self.longest_road_length,
             self.hands.get(color).copy(),
             self.trains_remaining.copy(),
-            self.tickets.get(color).copy(),
+            self.player_tickets.get(color).copy(),
             self.revealed_cards.copy(),
             len(self.tickets),
             len(self.deck),
-            self.player_turn
+            self.player_turn,
+            self.turn_number,
+            self.routes
         )
-
-
-    def _next_turn(self):
-        """ Cycles the index logically associated with the player who will make their move next """
-        self.player_turn = (self.player_turn + 1) % len(self.players)
 
 
     def _refill_reveal(self):

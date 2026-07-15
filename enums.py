@@ -1,12 +1,6 @@
 from enum import IntEnum, auto
 
 
-class DrawType(IntEnum):
-    """ Defines the possible draw types """
-    DRAW_TRAIN = auto()
-    DRAW_TICKET = auto()
-
-
 class Card(IntEnum):
     """ Defines the set of all possible card colors """
     RED = auto()
@@ -30,3 +24,10 @@ class PlayerColor(IntEnum):
     RED = auto()
 
 
+class DrawType(IntEnum):
+    """ Defines the set of all possible draw types """
+    DECK = auto()
+    REVEALED = auto()
+
+
+DRAW_TICKETS = auto()
