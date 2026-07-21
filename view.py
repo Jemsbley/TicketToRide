@@ -8,7 +8,7 @@ view should show to a specific player:
 - their score, separated
 - all other players scores
 - if the game is going around for its last turn
-- the turn number # TODO add functionality for turn number count in game
+- the turn number
 - the revealed cards at the top
 - the number of remaining cards in the deck
 - the number of remaining cards in the tickets pile

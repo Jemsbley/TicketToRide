@@ -133,31 +133,62 @@ class Game:
         # TODO declare winner
 
 
-    def _complete_action(self, color: e.PlayerColor, action: Action, can_draw_wild: bool = True):
-        """ Attempts to complete a turn action provided by a player """
+    def _complete_action(self, color: e.PlayerColor, action: Action, can_draw_wild: bool = True) -> int:
+        """ Attempts to complete a turn action provided by a player. Returns 0 on success and 1 on failure """
         if isinstance(action, DrawTrain):
             if isinstance(action, int):
                 card = self.revealed_cards.pop(action)
                 self.hands[color].append(card)
                 if card != e.Card.WILD:
                     self._complete_action(color, self.players.get(color).draw_trains(self._get_game_state(color)), False)
-                    return
+                    return 0
                 elif not can_draw_wild:
                     raise ValueError("Cannot draw wild card right now")
-                return
+                return 0
             else:
                 self.hands[color].append(self._draw_from_deck())
                 self._complete_action(color, self.players.get(color).draw_trains(self._get_game_state(color)))
-                return
+                return 0
         elif action == e.DRAW_TICKETS:
             self._draw_tickets(color, c.TICKETS_DRAWN_DURING_TURN, c.TICKETS_REQUIRED_KEEP_DURING_TURN)
-            return
+            return 0
         elif isinstance(action, Claim):
-            # TODO validate if this claim is open, the player has provided sufficient resources, the player owns these resources
-            # TODO update score if necessary
-            return
+            rs_found = None
+            for rs in self.routes:
+                if (rs.route.start == action.start and rs.route.end == action.end) or (
+                        rs.route.end == action.start and rs.route.start == action.end):
+                    if rs.claims.get(action.path_color) is not None: return 1
+                    rs_found = rs
+            if not self._cards_sufficient(rs_found.route, action.path_color, action.cards):
+                return 1
+            for card in action.cards:
+                if card not in self.hands.get(color):
+                    return 1
+            rs_found.claims.update({action.path_color: color})
+            for card in action.cards:
+                self.hands[color].remove(card)
+            self.scores[color] += c.PATH_LENGTH_POINTS[rs_found.route.length]
+            return 0
         else:
             raise ValueError("Invalid action")
+
+
+    def _cards_sufficient(self, route: a.Route, color: e.Card, cards: list[e.Card]) -> bool:
+        """ Determines if the cards provided are sufficient for the given route"""
+        if len(cards) != route.length:
+            return False
+        for card in cards:
+            if card != e.Card.WILD and card != color:
+                return False
+        return True
+
+
+    def _route_is_open(self, start: a.City, end: a.City, color: e.Card) -> bool:
+        """ Determines if the given route exists and is open """
+        for rs in self.routes:
+            if (rs.route.start == start and rs.route.end == end) or (rs.route.end == start and rs.route.start == end):
+                return rs.claims.get(color) is None
+        return False
 
 
     def _draw_tickets(self, player: e.PlayerColor, num_to_draw: int, num_to_keep: int):
