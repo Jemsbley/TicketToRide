@@ -5,6 +5,8 @@ import american_board as a
 import constants as c
 import controller
 import enums as e
+from enums import PlayerColor
+from view import GameView
 
 
 @dataclass
@@ -23,10 +25,10 @@ class Claim:
     cards: list[e.Card]
 
 
-DrawTrain = int | e.DrawType.DECK
+DrawTrain = e.DrawType | int
 
 # An action is either drawing in some aspect or attempting to claim a route
-Action = e.DRAW_TICKETS | Claim | DrawTrain
+Action = e.DrawTickets | Claim | DrawTrain | e.Pass
 
 
 @dataclass
@@ -59,7 +61,7 @@ def _create_deck() -> list[e.Card]:
 
 def _initialize_routes() -> list[RouteState]:
     """ Initializes the routes of the game """
-    all_routes = [RouteState(item, {item.color: None for _ in range(len(item.color))}) for item in a.ROUTES]
+    all_routes = [RouteState(item, {color: None for color in item.color}) for item in a.ROUTES]
     return all_routes
 
 
@@ -85,9 +87,10 @@ class Game:
         self.is_ending: bool = False
         self.turn_number: int = 0
         self.in_progress: bool = False
+        self.views: dict[e.PlayerColor, GameView] = dict()
 
 
-    def start(self, players: list[controller.Controller]):
+    def start(self, players: list[controller.Controller]) -> PlayerColor:
         """ Starts and plays out the game """
         if self.in_progress:
             raise ValueError("Game already started")
@@ -114,11 +117,16 @@ class Game:
         self.tickets = a.TICKETS
         random.shuffle(self.tickets)
         for player in self.players.keys():
+            self.player_tickets[player] = []
+            self.views[player] = GameView(player)
+            self.views[player].redraw(self._get_game_state(player))
             self._draw_tickets(player, c.START_OF_GAME_TICKET_DRAW, c.START_OF_GAME_TICKET_REQUIRED_KEEP)
         while not self.is_ending:
             self.player_turn = self.turn_cycle[self.player_turn]
             if self.player_turn == colors[0]:
                 self.turn_number += 1
+            for color in self.views.keys():
+                self.views.get(color).redraw(self._get_game_state(color))
             action = self.players.get(self.player_turn).make_turn(self._get_game_state(self.player_turn))
             self._complete_action(self.player_turn, action)
             if self.trains_remaining[self.player_turn] <= 2:
@@ -128,37 +136,50 @@ class Game:
         self.turn_number += 1
         while not self.player_turn == final_turn:
             self.player_turn = self.turn_cycle[self.player_turn]
+            for color in self.views.keys():
+                self.views.get(color).redraw(self._get_game_state(color))
             action = self.players.get(self.player_turn).make_turn(self._get_game_state(self.player_turn))
             self._complete_action(self.player_turn, action)
-        # TODO declare winner
+        first = None
+        max = -1
+        for item in self.scores.keys():
+            if self.scores[item] > max:
+                first = item
+        return first
 
 
-    def _complete_action(self, color: e.PlayerColor, action: Action, can_draw_wild: bool = True) -> int:
+    def _complete_action(self, color: e.PlayerColor, action: Action, can_draw_wild: bool = True, drawn_once: bool = False) -> int:
         """ Attempts to complete a turn action provided by a player. Returns 0 on success and 1 on failure """
         if isinstance(action, DrawTrain):
-            if isinstance(action, int):
+            if isinstance(action, e.DrawType):
+                self.hands[color].append(self._draw_from_deck())
+                if not drawn_once and (len(self.deck) + len(self.withdraw_pile) > 0 or len(self.revealed_cards) > 0):
+                    self._complete_action(color, self.players.get(color).draw_trains(self._get_game_state(color)), drawn_once = True)
+                return 0
+            else:
                 card = self.revealed_cards.pop(action)
+                if len(self.deck) or len(self.withdraw_pile) > 0:
+                    self._refill_reveal()
                 self.hands[color].append(card)
-                if card != e.Card.WILD:
-                    self._complete_action(color, self.players.get(color).draw_trains(self._get_game_state(color)), False)
+                if card != e.Card.WILD and not drawn_once:
+                    self._complete_action(color, self.players.get(color).draw_trains(self._get_game_state(color)),
+                                          False)
                     return 0
                 elif not can_draw_wild:
                     raise ValueError("Cannot draw wild card right now")
                 return 0
-            else:
-                self.hands[color].append(self._draw_from_deck())
-                self._complete_action(color, self.players.get(color).draw_trains(self._get_game_state(color)))
-                return 0
-        elif action == e.DRAW_TICKETS:
+        elif isinstance(action, e.DrawTickets):
             self._draw_tickets(color, c.TICKETS_DRAWN_DURING_TURN, c.TICKETS_REQUIRED_KEEP_DURING_TURN)
             return 0
         elif isinstance(action, Claim):
             rs_found = None
-            for rs in self.routes:
+            for index in range(len(self.routes)):
+                rs = self.routes[index]
                 if (rs.route.start == action.start and rs.route.end == action.end) or (
                         rs.route.end == action.start and rs.route.start == action.end):
                     if rs.claims.get(action.path_color) is not None: return 1
                     rs_found = rs
+                    break
             if not self._cards_sufficient(rs_found.route, action.path_color, action.cards):
                 return 1
             for card in action.cards:
@@ -168,6 +189,10 @@ class Game:
             for card in action.cards:
                 self.hands[color].remove(card)
             self.scores[color] += c.PATH_LENGTH_POINTS[rs_found.route.length]
+            self.trains_remaining[color] -= rs_found.route.length
+            # TODO calculate longest route
+            return 0
+        elif isinstance(action, e.Pass):
             return 0
         else:
             raise ValueError("Invalid action")
@@ -177,6 +202,15 @@ class Game:
         """ Determines if the cards provided are sufficient for the given route"""
         if len(cards) != route.length:
             return False
+        if color is None:
+            color_need = None
+            for card in cards:
+                if card != e.Card.WILD:
+                    if color_need is None:
+                        color_need = card
+                    elif color_need != card:
+                        return False
+            return True
         for card in cards:
             if card != e.Card.WILD and card != color:
                 return False
@@ -193,12 +227,12 @@ class Game:
 
     def _draw_tickets(self, player: e.PlayerColor, num_to_draw: int, num_to_keep: int):
         drawn = [self.tickets.pop(0) for _ in range(min(num_to_draw, len(self.tickets)))]
-        put_to_bottom = (self.players.get(player).draw_tickets(drawn.copy(), num_to_keep,
+        keep = (self.players.get(player).draw_tickets(drawn.copy(), min(num_to_keep, len(drawn)),
                                                                self._get_game_state(self.player_turn)))
-        for item in put_to_bottom:
-            if item not in drawn: raise ValueError("Discarded ticket not from drawn set")
-        kept = [item for item in drawn if item not in put_to_bottom]
-        self.player_tickets.get(player).extend(kept)
+        for item in keep:
+            if item not in drawn: raise ValueError("Kept ticket not from drawn set")
+        put_to_bottom = [item for item in drawn if item not in keep]
+        self.player_tickets.get(player).extend(keep)
         self.tickets.extend(put_to_bottom)
 
 

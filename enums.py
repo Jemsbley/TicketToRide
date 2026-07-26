@@ -1,4 +1,4 @@
-from enum import IntEnum, auto
+from enum import IntEnum, auto, Enum
 
 
 class Card(IntEnum):
@@ -30,4 +30,9 @@ class DrawType(IntEnum):
     REVEALED = auto()
 
 
-DRAW_TICKETS = auto()
+class DrawTickets(Enum):
+    DRAWTICKETS = auto()
+
+
+class Pass(Enum):
+    PASS = auto()
