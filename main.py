@@ -3,7 +3,7 @@ from game import Game
 
 game = Game()
 
-player_count = 2
+player_count = 5
 players = []
 for _ in range(player_count):
     players.append(Controller())

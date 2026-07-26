@@ -88,10 +88,12 @@ class Game:
         self.turn_number: int = 0
         self.in_progress: bool = False
         self.views: dict[e.PlayerColor, GameView] = dict()
+        self.passes: int = 0
 
 
     def start(self, players: list[controller.Controller]) -> PlayerColor:
         """ Starts and plays out the game """
+        # TODO make viewing conditional as an argument to this method
         if self.in_progress:
             raise ValueError("Game already started")
         if len(players) < 2 or len(players) > 5:
@@ -122,6 +124,8 @@ class Game:
             self.views[player].redraw(self._get_game_state(player))
             self._draw_tickets(player, c.START_OF_GAME_TICKET_DRAW, c.START_OF_GAME_TICKET_REQUIRED_KEEP)
         while not self.is_ending:
+            if self.passes == len(self.players.keys()):
+                break
             self.player_turn = self.turn_cycle[self.player_turn]
             if self.player_turn == colors[0]:
                 self.turn_number += 1
@@ -150,6 +154,11 @@ class Game:
 
     def _complete_action(self, color: e.PlayerColor, action: Action, can_draw_wild: bool = True, drawn_once: bool = False) -> int:
         """ Attempts to complete a turn action provided by a player. Returns 0 on success and 1 on failure """
+        if isinstance(action, e.Pass):
+            self.passes += 1
+            return 0
+        self.passes = 0
+
         if isinstance(action, DrawTrain):
             if isinstance(action, e.DrawType):
                 self.hands[color].append(self._draw_from_deck())
@@ -177,7 +186,7 @@ class Game:
                 rs = self.routes[index]
                 if (rs.route.start == action.start and rs.route.end == action.end) or (
                         rs.route.end == action.start and rs.route.start == action.end):
-                    if rs.claims.get(action.path_color) is not None: return 1
+                    if rs.claims.get(action.path_color) is not None or color in rs.claims.keys(): return 1
                     rs_found = rs
                     break
             if not self._cards_sufficient(rs_found.route, action.path_color, action.cards):
@@ -190,12 +199,20 @@ class Game:
                 self.hands[color].remove(card)
             self.scores[color] += c.PATH_LENGTH_POINTS[rs_found.route.length]
             self.trains_remaining[color] -= rs_found.route.length
-            # TODO calculate longest route
-            return 0
-        elif isinstance(action, e.Pass):
+            # TODO calculate longest route and determine if we need to reassign the bonus
             return 0
         else:
             raise ValueError("Invalid action")
+
+
+    def _determine_if_new_longest_route(self, route: a.Route, color: e.PlayerColor) -> int:
+        """ Determines if the addition of the given route to the player's claims gives them the longest route.
+        Returns the length of this player's longest route including this new route. This player can only acquire
+        longest route through the newest addition, so we can always check a DFS starting from this
+        route's start and end."""
+        # TODO idk if this is correct. make logic for figuring out player's longest route
+        players_routes = [rs.route for rs in self.routes if color in rs.claims.keys()]
+        return route.length
 
 
     def _cards_sufficient(self, route: a.Route, color: e.Card, cards: list[e.Card]) -> bool:

@@ -1,6 +1,5 @@
 
 from __future__ import annotations
-# TODO implement full view, probably use claude to generate this so I don't need to worry about visuals
 """
 view should show to a specific player:
 - their hand

@@ -56,11 +56,12 @@ class Controller:
                 all_routes = self._find_open_routes(gamestate)
                 random.shuffle(all_routes)
                 for rs in all_routes:
+                    if gamestate.player_turn in rs.claims.keys():
+                        continue
                     for item in rs.claims.keys():
                         if rs.claims[item] is None:
                             cards = self._count_colors(gamestate, item)
                             if len(cards) >= rs.route.length:
-                                # print("claiming")
                                 return g.Claim(rs.route.start, rs.route.end, item, cards[:rs.route.length])
                 choices.remove(2)
 
